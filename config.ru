@@ -5,7 +5,6 @@ $stdout.sync = true
 
 require 'bundler'
 require 'regexper'
-require 'redirector'
 require 'json'
 
 Bundler.require(:default, ENV['RACK_ENV'].to_sym)
@@ -24,7 +23,7 @@ end
 map '/parse' do
   run lambda { |env|
     request = Rack::Request.new(env)
-    regexp = request.body.read
+    regexp = request.body.read.force_encoding('UTF-8')
     headers = {
       'Content-Type' => 'application/json',
       'Cache-Control' => 'no-cache'
@@ -38,7 +37,7 @@ map '/parse' do
           JSON.generate({
             :raw_expr => regexp,
             :structure => Regexper.parse(regexp).to_obj
-          })
+          }, :max_nesting => 1000)
         ]
       ]
     rescue Regexper::ParseError => error
@@ -49,6 +48,17 @@ map '/parse' do
         [
           JSON.generate({
             :error => error.to_s
+          })
+        ]
+      ]
+    rescue JSON::NestingError => error
+      env['rack.logger'].error("Excessive nesting: (exception=\"#{error}\") (input=\"#{regexp}\")")
+      [
+        500,
+        headers,
+        [
+          JSON.generate({
+            :error => "Regexp contains excessive nesting (error: #{error.to_s})"
           })
         ]
       ]
@@ -67,9 +77,7 @@ map '/parse' do
   }
 end
 
-use Redirector
-
-use Rack::Static, :urls => ["/"], :root => root.join("public")
+use Rack::Static, :urls => ["/"], :root => root.join("public"), :index => "index.html"
 
 run lambda { |env|
   [204, {}, []]
